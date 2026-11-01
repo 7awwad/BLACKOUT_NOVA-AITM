@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+const origin='http://127.0.0.1:5173';
+const login=await fetch(origin+'/signin-with-chatgpt?return_to=/',{redirect:'manual'});
+const cookie=login.headers.getSetCookie().map(c=>c.split(';')[0]).join('; ');
+assert.ok(cookie);
+async function api(action,body={},team='',admin=true,expected=200){const r=await fetch(origin+'/api/game',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,...(admin?{Cookie:cookie}:{}),...(team?{Authorization:'Bearer '+team}:{})},body:JSON.stringify({action,...body})});const d=await r.json();assert.equal(r.status,expected,action+': '+JSON.stringify(d));return d;}
+const {mission:m}=await api('create',{name:'Automated rehearsal',demo:true,count:10,duration:20});
+await api('admin',{id:m.id},'',false,403);
+await api('player',{id:m.id},'WRONG',false,403);
+await api('start',{id:m.id},m.teams[0].code,false,403);
+await api('scan',{id:m.id,token:m.qr[0]},m.teams[0].code,false,400);
+await api('configure',{id:m.id,puzzles:[]},'',true,400);
+await api('configure',{id:m.id,puzzles:[]},m.teams[0].code,false,403);
+const ps=[{title:'Map question',question:'Cities without houses?',hint:'Navigation',answer:'map',type:'RIDDLE'},{title:'Sequence',question:'3,7,15,31,?',hint:'Double plus one',answer:'63',type:'LOGIC'}];
+await api('configure',{id:m.id,mode:'puzzles',puzzles:ps});
+const before=await api('player',{id:m.id},m.teams[0].code,false);
+assert.equal(before.puzzles[0].question,ps[0].question);
+assert.equal(before.puzzles[0].answer,undefined);
+await api('start',{id:m.id});
+await api('configure',{id:m.id,puzzles:ps},'',true,400);
+await Promise.all(m.teams.map(t=>api('answer',{id:m.id,index:0,answer:'map'},t.code,false)));
+await new Promise(r=>setTimeout(r,3100));
+await Promise.all(m.teams.map(t=>api('answer',{id:m.id,index:1,answer:'63'},t.code,false)));
+await api('caution',{id:m.id});
+const t=m.teams[0];
+for(const token of m.qr)await api('scan',{id:m.id,token},t.code,false);
+await new Promise(r=>setTimeout(r,3100));
+const decoded=await api('decode',{id:m.id,number:'0000000000'},t.code,false);
+assert.equal(decoded.player.phone,'0000000000');assert.equal(decoded.player.winner,null);
+const other=await api('player',{id:m.id},m.teams[1].code,false);
+assert.equal(other.phone,undefined);assert.equal(other.clues.length,0);
+await api('winner',{id:m.id,teamId:t.id});
+const finished=await api('player',{id:m.id},t.code,false);
+assert.equal(finished.winner,t.name);assert.equal(finished.phase,'ended');
+await api('scan',{id:m.id,token:m.qr[0]},t.code,false,400);
+console.log('PASS: real API/database, 10 concurrent teams, admin isolation, phase gates, independent clues, verified number and confirmed winner.');
+

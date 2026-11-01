@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {game,gameURL,cam,seaURL,sceneURL} from './load-game.mjs';
+function compileUI(file,replacements={}){let code=ts.transpileModule(readFileSync(new URL('../app/'+file,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX}}).outputText;for(const name of ['react/jsx-runtime','react','lucide-react'])code=code.replaceAll('"'+name+'"',JSON.stringify(import.meta.resolve(name))).replaceAll("'"+name+"'",JSON.stringify(import.meta.resolve(name)));for(const [name,url] of Object.entries(replacements))code=code.replaceAll("'"+name+"'",JSON.stringify(url));return 'data:text/javascript;base64,'+Buffer.from(code).toString('base64');}
+const panelURL=compileUI('chameleon-panel.tsx',{'./chameleon-scene':sceneURL}),seaPanelURL=compileUI('sea-battle-panel.tsx',{'./sea-battle':seaURL});
+const {default:Panel,ChameleonDesk}=await import(panelURL);
+const {default:PassPlay}=await import(compileUI('sea-pass-play.tsx',{'./sea-battle-panel':seaPanelURL,'./chameleon-panel':panelURL}));
+const {default:Setup}=await import(compileUI('round-setup.tsx',{'./game':gameURL}));
+const m=game.createMission('Render rehearsal','9876543210',8,60,true);m.miniGameMode='chameleon';m.chameleonBattles=cam.createCamBattles(m.teams);m.phase='games';m.startedAt=Date.now();
+const g=m.chameleonBattles[0],h=m.teams.find(t=>t.id===g.legs[0].hider),s=m.teams.find(t=>g.teams.includes(t.id)&&t.id!==h.id);
+const props=t=>({battle:game.playerView(m,t).chameleon,teamId:t.id,closed:false,busy:false,offline:false,onAction:async()=>{}});
+const hiding=renderToStaticMarkup(createElement(Panel,props(h)));assert.ok(hiding.includes('CAMOUFLAGE STUDIO'));assert.ok(hiding.includes('data-spot="15"'));assert.ok(hiding.includes('Left arm'));assert.ok(hiding.includes('Lock &amp; start hunt'));
+const waiting=renderToStaticMarkup(createElement(Panel,props(s)));assert.doesNotMatch(waiting,/data-spot|CAMOUFLAGE STUDIO/);
+game.applyPlayer(m,h,'cam-lock',{figures:g.legs[0].figures});
+const seek=renderToStaticMarkup(createElement(Panel,props(s)));assert.match(seek,/Fire scanner/);assert.match(seek,/Magnify the scenery/);assert.doesNotMatch(seek,/data-spot|CAMOUFLAGE STUDIO/);
+assert.equal((renderToStaticMarkup(createElement(ChameleonDesk,{mission:m,onLocal:()=>{}})).match(/Pass &amp; play<\/button>/g)||[]).length,4);
+const shared=renderToStaticMarkup(createElement(PassPlay,{mission:m,battleId:g.id,kind:'chameleon',onClose:()=>{},onRefresh:async()=>{}}));assert.match(shared,/PRIVATE BOARD HIDDEN/);assert.doesNotMatch(shared,/<polygon|CAMOUFLAGE STUDIO/);
+m.phase='lobby';const setup=renderToStaticMarkup(createElement(Setup,{mission:m,busy:false,onSave:()=>{}}));assert.match(setup,/Chameleon Hunt/);assert.equal((setup.match(/DUEL [1-4]/g)||[]).length,4);
+console.log('PASS: private paint editor, seeker waiting/aiming/zoom views, four matchups, setup mode and shared-device handover curtain.');
